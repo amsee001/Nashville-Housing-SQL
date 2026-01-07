@@ -1,0 +1,168 @@
+-- Project utilizes Excel, MySQL, and Taleau
+-- Original Excel files downloaded from https://github.com/AlexTheAnalyst/PortfolioProjects/tree/main. Excel file was formated for MySQL import
+-- SQL used to clean and analyze data
+-- Tableau used visualize data
+
+create table nashville_housing(
+UniqueID int,
+ParcelID varchar(255),
+LandUse varchar(255),
+PropertyAddress varchar(255),
+SaleDate date,
+SalePrice int,
+LegalReference varchar(255),
+SoldAsVacant varchar(255),
+OwnerName varchar(255),
+OwnerAddress varchar(255),
+Acreage float,
+TaxDistrict varchar(255),
+LandValue int,
+BuildingValue int,
+TotalValue int,
+YearBuilt int,
+Bedrooms int,
+FullBath int,
+HalfBath int
+);
+
+/*Convert Excel file to CSV and initial clean for import. MySQL can not natively import Excel files and requires formatting changes to import all data.
+Initial cleaning for import: format date (YMD), replace text column (blanks) with ('NULL'), replace int column (blanks) with ('0'), standardize number formatting, correct entries with multiple lines.
+Replace (',') with (';') for PropertyAdresss, OwnerName, and OwnerAddress if trying to import columns with as little change as possible. (';') is a unique character that is not used in the data.
+Alternative 1, (Text to Columns) tool can be used to split the text in to new columns before import.
+Alternative 2, MySQL will split the text into new columns based on comma delimited. Create new columns in the table to accompany PropertyAdresss, OwnerName, and OwnerAddress.
+*/
+
+-- Import CSV
+LOAD DATA INFILE 'NashvilleHousingData.csv'
+INTO TABLE nashville_housing
+FIELDS TERMINATED BY ','
+IGNORE 1 LINES;
+
+SELECT *
+FROM nashville_housing;
+
+-- Convert 'NULL' to keyword
+UPDATE nashville_housing
+SET PropertyAddress = null
+WHERE PropertyAddress = 'NULL';
+
+UPDATE nashville_housing
+SET OwnerName = null
+WHERE OwnerName = 'NULL';
+
+UPDATE nashville_housing
+SET OwnerAddress = null
+WHERE OwnerAddress = 'NULL';
+
+UPDATE nashville_housing
+SET TaxDistrict = null
+WHERE TaxDistrict = 'NULL';
+
+-- Conform SoldAsVacant formatting
+SELECT DISTINCT(SoldAsVacant),
+	COUNT(SoldAsVacant)
+FROM nashville_housing
+GROUP BY SoldAsVacant;
+
+UPDATE nashville_housing
+SET SoldAsVacant = 'Yes'
+WHERE SoldAsVacant = 'Y';
+
+UPDATE nashville_housing
+SET SoldAsVacant = 'No'
+WHERE SoldAsVacant = 'N';
+
+-- Populated missing PropertyAddress
+SELECT a.ParcelID, a.PropertyAddress, b.parcelID, b.PropertyAddress,
+	IFNULL(a.PropertyAddress, b.PropertyAddress) AS FilledAddress
+FROM nashville_housing a
+JOIN nashville_housing b
+	on a.ParcelID = b.ParcelID
+    and a.UniqueID <> b.UniqueID
+WHERE a.PropertyAddress IS NULL;
+
+UPDATE nashville_housing a
+JOIN nashville_housing b
+	ON a.ParcelID = b.ParcelID
+    AND a.UniqueID <> b.UniqueID
+SET a.PropertyAddress = IFNULL(a.PropertyAddress, b.PropertyAddress)
+WHERE a.PropertyAddress IS NULL;
+
+-- Split PropertyAddress at (';') into PropertyCity
+SELECT *, 
+    SUBSTRING_INDEX(PropertyAddress, ';', 1) AS PropertyAddress,
+    SUBSTRING_INDEX(SUBSTRING_INDEX(PropertyAddress, ';', 2), ';', -1) AS PropertyCity
+FROM nashville_housing;
+
+ALTER TABLE nashville_housing
+ADD PropertyCity VARCHAR(255);
+
+UPDATE nashville_housing
+SET PropertyCity = TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(PropertyAddress, ';', 2), ';', -1));
+
+ALTER TABLE nashville_housing
+MODIFY COLUMN PropertyCity VARCHAR(255) AFTER PropertyAddress;
+
+UPDATE nashville_housing
+SET PropertyAddress = TRIM(SUBSTRING_INDEX(PropertyAddress, ';', 1));
+
+-- Split OwnerAddress at (';') into OwnerCity, and OwnerState
+SELECT *, 
+    SUBSTRING_INDEX(OwnerAddress, ';', 1) AS OwnerAddress,
+    SUBSTRING_INDEX(SUBSTRING_INDEX(OwnerAddress, ';', 2), ';', -1) AS OwnerCity,
+	SUBSTRING_INDEX(OwnerAddress, ';', -1) AS OwnerState
+FROM nashville_housing;
+
+ALTER TABLE nashville_housing
+	ADD OwnerCity VARCHAR(255),
+	ADD OwnerState VARCHAR(255);
+
+UPDATE nashville_housing
+SET OwnerCity = Trim(SUBSTRING_INDEX(SUBSTRING_INDEX(OwnerAddress, ';', 2), ';', -1));
+
+UPDATE nashville_housing
+SET OwnerState = Trim(SUBSTRING_INDEX(OwnerAddress, ';', -1));
+
+ALTER TABLE nashville_housing
+MODIFY COLUMN OwnerCity VARCHAR(255) AFTER OwnerAddress;
+
+ALTER TABLE nashville_housing
+MODIFY COLUMN OwnerState VARCHAR(255) AFTER OwnerCity;
+
+UPDATE nashville_housing
+SET OwnerAddress = TRIM(SUBSTRING_INDEX(OwnerAddress, ';', 1));
+
+-- Replace (';') with (',') in OwnerName
+SELECT OwnerName,
+	REPLACE(OwnerName, ';', ',')
+From nashville_housing;
+
+UPDATE nashville_housing
+SET OwnerName = REPLACE(OwnerName, ';', ',');
+
+-- Correct LandUse misspelling
+SELECT DISTINCT LandUse,
+	COUNT(*)
+FROM nashville_housing
+group by LandUse
+ORDER BY LandUse;
+
+UPDATE nashville_housing
+SET  LandUse = 'GREENBELT'
+WHERE LandUse = 'GREENBELT/RES';
+
+UPDATE nashville_housing
+SET  LandUse = 'VACANT RESIDENTIAL LAND'
+WHERE LandUse = 'VACANT RES LAND'
+	OR LandUse = 'VACANT RESIENTIAL LAND';
+
+-- Create new table only with complete data
+-- Assume removed data as non essential
+SELECT *
+FROM nashville_housing
+WHERE Acreage = 0;
+
+CREATE TABLE nashville_housing_cleaned AS
+SELECT *
+FROM nashville_housing
+WHERE Acreage <> 0;
